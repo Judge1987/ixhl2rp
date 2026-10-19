@@ -1,6 +1,6 @@
 ITEM.name = "Противопаразитарный препарат"
 ITEM.description = "Таблетки для очищения организма от кишечных паразитов."
-ITEM.model = "models/props_lab/jar01a.mdl"
+ITEM.model = "models/biirrii/pack_8/props/medicine_1.mdl"
 ITEM.width = 1
 ITEM.height = 1
 ITEM.category = "Медицина"

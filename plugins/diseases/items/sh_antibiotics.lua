@@ -1,6 +1,6 @@
 ITEM.name = "Антибиотик"
 ITEM.description = "Антибактериальный препарат. Помогает при бактериальных инфекциях лёгких, но бесполезен при простуде."
-ITEM.model = "models/props_junk/garbage_glassbottle002a.mdl"
+ITEM.model = "models/hlvr/props/bottles/medicine_bottle_2.mdl"
 ITEM.width = 1
 ITEM.height = 1
 ITEM.category = "Медицина"

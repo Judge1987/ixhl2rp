@@ -1,6 +1,6 @@
 ITEM.name = "Жаропонижающее"
 ITEM.description = "Таблетки от простуды. Облегчают симптомы ОРЗ."
-ITEM.model = "models/props_junk/garbage_plasticbottle003a.mdl"
+ITEM.model = "models/biirrii/pack_8/props/medicine_1.mdl"
 ITEM.width = 1
 ITEM.height = 1
 ITEM.category = "Медицина"
