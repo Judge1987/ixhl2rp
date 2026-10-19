@@ -174,6 +174,31 @@ function PANEL:Init()
 	bottom.Paint = function(_, w, h) end
 	bottom:SetTall(28)
 
+	self.copy = bottom:Add("DButton")
+	self.copy:Dock(LEFT)
+	self.copy:DockMargin(4, 0, 0, 0)
+	self.copy:SetWidth(110)
+	self.copy:SetText(L("notepaperCopy"))
+	self.copy.DoClick = function()
+		-- копируем содержимое текущей страницы как обычный текст
+		local page = tostring(self.pages[self.currentPage] or "")
+
+		if (page == "") then
+			return
+		end
+
+		SetClipboardText(page
+			:gsub("<br%s*/?>", "\n")
+			:gsub("</p>", "\n")
+			:gsub("<[^>]->", "")
+			:gsub("&nbsp;", " ")
+			:gsub("&lt;", "<")
+			:gsub("&gt;", ">")
+			:gsub("&amp;", "&"))
+
+		notification.Add(L("notepaperCopied"), NOT_GENERIC, ScrH() * 0.15)
+	end
+
 	self.close = bottom:Add("DButton")
 	self.close:Dock(RIGHT)
 	self.close:DockMargin(0, 0, 4, 0)
@@ -214,7 +239,8 @@ function PANEL:Init()
 	-- приём изменённого HTML из страницы (режим WYSIWYG-разметки)
 	self.html.CanExecuteJavascript = function(_, json)
 		if (IsValid(self) and self.saveRequested and self.htmlMode == "rich") then
-			local value = util.JSONToTable(json)
+			-- ixGetBody() возвращает JSON.stringify(html) — снимаем обе уровня кодирования
+			local value = util.JSONToTable(util.JSONToTable(json))
 
 			if (isstring(value)) then
 				self.pages[self.currentPage] = value
@@ -308,10 +334,11 @@ function PANEL:canSendToServer()
 
 	for i = 1, #self.pages do
 		total = total + tostring(self.pages[i]):len() + 8
+	end
 
-		if (total > PLUGIN.maxPageLength) then
-			return false
-		end
+	-- весь пакет уходит одним сообщением netstream (буфер ~32 КБ)
+	if (total > PLUGIN.maxPageLength * 2) then
+		return false
 	end
 
 	return true
