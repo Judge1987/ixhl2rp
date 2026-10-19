@@ -8,25 +8,46 @@ local A4_RATIO = 210 / 297
 AccessorFunc(PANEL, "bEditable", "Editable", FORCE_BOOL)
 AccessorFunc(PANEL, "itemID", "ItemID", FORCE_NUMBER)
 
--- извлекает "тело" страницы из собранного HTML (обёртку добавляет сервер)
+-- переводит сырой пользовательский текст в HTML-разметку страниц
+local function textToHTML(raw)
+	raw = tostring(raw or "")
+
+	if (raw == "") then
+		return ""
+	end
+
+	local out = {}
+
+	for line in (raw .. "\n"):gmatch("([^\r\n]*)\r?\n") do
+		if (line ~= "") then
+			out[#out + 1] = "<p>" .. line:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;") .. "</p>"
+		else
+			out[#out + 1] = "<p>&nbsp;</p>"
+		end
+	end
+
+	return table.concat(out, "\n")
+end
+
+-- извлекает "тело" страницы из собранного HTML (обёртку добавляет сервер).
+-- заголовок при этом вырезается — иначе он бы удваивался при повторной сборке
 local function extractBody(html)
 	html = tostring(html or "")
 
-	local start = html:find("<div class=\"a4\">", 1, true)
+	local start = html:find('<div class="a4">', 1, true)
 
 	if (!start) then
 		return html
 	end
 
-	start = start + #"<div class=\"a4\">"
+	start = start + #'<div class="a4">'
 
 	local finish = html:find("</div></body>", start, true)
+	local body = finish and html:sub(start, finish - 1) or html:sub(start)
 
-	if (!finish) then
-		return html:sub(start)
-	end
+	body = body:gsub('<h1 class="note-title">.-</h1>', "", 1)
 
-	return html:sub(start, finish - 1)
+	return body
 end
 
 function PANEL:Init()
@@ -39,6 +60,7 @@ function PANEL:Init()
 	self.pages = {}
 	self.currentPage = 1
 	self.bEditable = false
+	self.htmlMode = "text"
 
 	self:SetTitle(L("notepaperUntitled"))
 	self:SetBackgroundBlur(true)
@@ -78,14 +100,72 @@ function PANEL:Init()
 		self:ShowPage(self.currentPage + 1)
 	end
 
-	self:addPageButton = top:Add("DButton")
-	self:addPageButton:Dock(RIGHT)
-	self:addPageButton:DockMargin(0, 0, 4, 0)
-	self:addPageButton:SetWidth(90)
-	self:addPageButton:SetText("+ " .. L("notepaperNewPage"))
-	self:addPageButton.DoClick = function()
+	local addPageButton = top:Add("DButton")
+	addPageButton:Dock(RIGHT)
+	addPageButton:DockMargin(0, 0, 4, 0)
+	addPageButton:SetWidth(90)
+	addPageButton:SetText("+ " .. L("notepaperNewPage"))
+	addPageButton.DoClick = function()
 		self:addPage()
 	end
+
+	self.addPageButton = addPageButton
+
+	local btnRich = top:Add("DButton")
+	btnRich:Dock(RIGHT)
+	btnRich:DockMargin(0, 0, 4, 0)
+	btnRich:SetWidth(120)
+	btnRich:SetText(L("notepaperModeRich"))
+	btnRich.DoClick = function()
+		self:setHtmlMode("rich")
+	end
+
+	self.btnRich = btnRich
+
+	local btnText = top:Add("DButton")
+	btnText:Dock(RIGHT)
+	btnText:DockMargin(0, 0, 4, 0)
+	btnText:SetWidth(120)
+	btnText:SetText(L("notepaperModeText"))
+	btnText.DoClick = function()
+		self:setHtmlMode("text")
+	end
+
+	self.btnText = btnText
+
+	-- панель инструментов форматирования (видна только в режиме разметки)
+	local bar = self:Add("DPanel")
+	bar:Dock(TOP)
+	bar:DockMargin(0, 0, 0, 4)
+	bar:SetTall(26)
+	bar.Paint = function(_, w, h) end
+
+	local tools = {
+		{"notepaperBold", "document.execCommand('bold', false, null);"},
+		{"notepaperItalic", "document.execCommand('italic', false, null);"},
+		{"notepaperUnderline", "document.execCommand('underline', false, null);"},
+		{"notepaperHeading", "document.execCommand('formatBlock', false, 'h2');"},
+		{"notepaperParagraph", "document.execCommand('formatBlock', false, 'p');"},
+		{"notepaperList", "document.execCommand('insertUnorderedList', false, null);"},
+		{"notepaperQuote", "document.execCommand('formatBlock', false, 'blockquote');"}
+	}
+
+	for index, tool in ipairs(tools) do
+		local button = bar:Add("DButton")
+		button:Dock(LEFT)
+		button:DockMargin(0, 0, 4, 0)
+		button:SetWidth(70)
+		button:SetText(L(tool[1]))
+		button.DoClick = function()
+			if (IsValid(self.html) and self.bEditable and self.htmlMode == "rich") then
+				self.html:AllowScriptAccess(true)
+				self.html:ExecuteJavaScript(tools[index][2])
+			end
+		end
+	end
+
+	self.formatBar = bar
+	bar:SetVisible(false)
 
 	-- нижняя панель: название и кнопка сохранения/закрытия
 	local bottom = self:Add("DPanel")
@@ -100,18 +180,19 @@ function PANEL:Init()
 	self.close:SetText(L("notepaperClose"))
 	self.close.DoClick = function()
 		if (self.bEditable) then
-			self:commitCurrentPage()
+			self.saveRequested = true
 
-			if (!self:canSendToServer()) then
-				notification.Add(L("notepaperTooLong"), NOT_GENERIC, ScrH() * 0.25)
-
-				return
+			if (self.htmlMode == "rich" and IsValid(self.html)) then
+				-- контент страницы забирается из DHTML асинхронно —
+				-- сохранение продолжится в CanExecuteJavascript
+				self.html:AllowScriptAccess(true)
+				self.html:QueueJavascript([[ixGetBody();]])
+			else
+				self:commitCurrentPage()
+				self:finishSave()
 			end
 
-			netstream.Start("ixNoteEdit", self.itemID, {
-				title = self.title:GetValue(),
-				pages = self.pages
-			})
+			return
 		end
 
 		self:Close()
@@ -128,6 +209,33 @@ function PANEL:Init()
 	self.html = self:Add("DHTML")
 	self.html:Dock(FILL)
 	self.html:DockMargin(4, 0, 4, 0)
+	self.html:SetAllowedScripts({"lua"})
+
+	-- приём изменённого HTML из страницы (режим WYSIWYG-разметки)
+	self.html.CanExecuteJavascript = function(_, json)
+		if (IsValid(self) and self.saveRequested and self.htmlMode == "rich") then
+			local value = util.JSONToTable(json)
+
+			if (isstring(value)) then
+				self.pages[self.currentPage] = value
+			end
+
+			self:finishSave()
+		end
+
+		return true
+	end
+
+	-- после загрузки страницы включаем редактирование; если сохранение уже
+	-- запрошено — сразу забираем изменённый HTML обратно
+	self.html.OnHtmlFinished = function()
+		if (!IsValid(self) or !self.bEditable or self.htmlMode != "rich") then
+			return
+		end
+
+		self.html:AllowScriptAccess(true)
+		self.html:QueueJavascript(PLUGIN.editorJS .. (self.saveRequested and "ixGetBody();" or ""))
+	end
 
 	self.textEditor = self:Add("DTextEntry")
 	self.textEditor:Dock(FILL)
@@ -139,11 +247,42 @@ function PANEL:Init()
 	self:MakePopup()
 end
 
--- сохраняет текущий ввод редактора в массив страниц
+-- сохраняет текущий ввод редактора в массив страниц (только для HTML-режима)
 function PANEL:commitCurrentPage()
-	if (self.bEditable and IsValid(self.textEditor)) then
+	if (self.bEditable and IsValid(self.textEditor) and self.htmlMode ~= "rich") then
 		self.pages[self.currentPage] = self.textEditor:GetValue()
 	end
+end
+
+-- переключение режима редактирования: простой текст / HTML-разметка
+function PANEL:setHtmlMode(mode)
+	if (mode ~= "text" and mode ~= "rich") then
+		return
+	end
+
+	if (self.htmlMode == mode) then
+		return
+	end
+
+	if (self.htmlMode == "text") then
+		self:commitCurrentPage()
+	end
+
+	self.htmlMode = mode
+
+	if (IsValid(self.btnText)) then
+		self.btnText:SetActive(mode == "text")
+	end
+
+	if (IsValid(self.btnRich)) then
+		self.btnRich:SetActive(mode == "rich")
+	end
+
+	if (IsValid(self.formatBar)) then
+		self.formatBar:SetVisible(self.bEditable and mode == "rich")
+	end
+
+	self:ShowPage(self.currentPage)
 end
 
 -- максимум страниц для текущего предмета
@@ -168,7 +307,7 @@ function PANEL:canSendToServer()
 	local total = #tostring(self.title:GetValue())
 
 	for i = 1, #self.pages do
-		total = total + self.pages[i]:len() + 8
+		total = total + tostring(self.pages[i]):len() + 8
 
 		if (total > PLUGIN.maxPageLength) then
 			return false
@@ -185,9 +324,15 @@ function PANEL:ShowPage(index)
 
 	self.currentPage = index
 
-	local page = self.pages[index] or ""
+	local page = tostring(self.pages[index] or "")
 
-	if (self.bEditable) then
+	if (self.htmlMode == "rich" and !page:find("<")) then
+		-- страница пока хранится как сырой текст — превращаем её в разметку
+		page = textToHTML(page)
+		self.pages[index] = page
+	end
+
+	if (self.bEditable and self.htmlMode == "text") then
 		self.textEditor:SetValue(page)
 		self.html:SetVisible(false)
 		self.textEditor:SetVisible(true)
@@ -211,6 +356,20 @@ function PANEL:updateControls()
 		self.addPageButton:SetVisible(self.bEditable)
 		self.addPageButton:SetEnabled(count < self:getMaxPages())
 	end
+
+	if (IsValid(self.btnText)) then
+		self.btnText:SetVisible(self.bEditable)
+		self.btnText:SetActive(self.htmlMode == "text")
+	end
+
+	if (IsValid(self.btnRich)) then
+		self.btnRich:SetVisible(self.bEditable)
+		self.btnRich:SetActive(self.htmlMode == "rich")
+	end
+
+	if (IsValid(self.formatBar)) then
+		self.formatBar:SetVisible(self.bEditable and self.htmlMode == "rich")
+	end
 end
 
 function PANEL:SetEditable(bValue)
@@ -221,6 +380,10 @@ function PANEL:SetEditable(bValue)
 	end
 
 	self.bEditable = bValue
+
+	if (!bValue) then
+		self.htmlMode = "text"
+	end
 
 	if (IsValid(self.title)) then
 		self.title:SetVisible(bValue)
@@ -253,7 +416,7 @@ function PANEL:SetNoteData(data)
 end
 
 function PANEL:Think()
-	if (self.bEditable and IsValid(self.textEditor)) then
+	if (self.bEditable and self.htmlMode == "text" and IsValid(self.textEditor)) then
 		local text = self.textEditor:GetValue()
 
 		if (text:len() > PLUGIN.maxPageLength) then
@@ -261,6 +424,29 @@ function PANEL:Think()
 			self.textEditor:SetCaretPos(PLUGIN.maxPageLength)
 		end
 	end
+end
+
+-- завершает сохранение: проверяет размер и отправляет данные на сервер
+function PANEL:finishSave()
+	if (!self.bEditable) then
+		return
+	end
+
+	if (!self:canSendToServer()) then
+		self.saveRequested = false
+		notification.Add(L("notepaperTooLong"), NOT_GENERIC, ScrH() * 0.25)
+
+		return
+	end
+
+	self.saveRequested = false
+
+	netstream.Start("ixNoteEdit", self.itemID, {
+		title = self.title:GetValue(),
+		pages = self.pages
+	})
+
+	self:Close()
 end
 
 function PANEL:OnMouseReleased(mouseCode)
