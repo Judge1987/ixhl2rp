@@ -40,11 +40,45 @@ function PLUGIN.BuildPage(title, bodyHTML)
 	[[</div></body></html>]]
 end
 
+-- содержимое заметки уходит/приходит через netstream (подключён в sh_schema.lua).
+-- файлы с обработчиками подключаются первыми на обеих сторонах — иначе серверная
+-- отправка "ixNoteView" падает с "NetSteam: Undefined hook", а клиентская
+-- "ixNoteEdit" не доходит до сохранения.
 if (SERVER) then
+	-- серверная часть: netstream-обработчик + хук подбора листов
+	ix.util.Include("sv_netstream.lua")
 	ix.util.Include("sv_hooks.lua")
 else
-	ix.util.Include("cl_hooks.lua")
+	-- клиентская часть: панель загрузим раньше обработчика — на случай, если файл
+	-- с расширением имени панели не будет найден, ошибка будет понятной
+	ix.util.Include("derma/cl_notepaper.lua")
+	ix.util.Include("cl_netstream.lua")
 end
+
+-- WYSIWYG-редактор: включается в страницу после загрузки HTML в режиме редактирования.
+-- Обязателен: без него QueueJavascript(PLUGIN.editorJS .. ...) падает на конкатенации nil.
+PLUGIN.editorJS = [[
+(function() {
+	if (window.__ixEditorReady) { return; }
+	window.__ixEditorReady = true;
+
+	var container = document.querySelector('.a4');
+
+	if (container) {
+		container.contentEditable = 'true';
+		container.spellcheck = false;
+		container.style.outline = 'none';
+	}
+
+	/* вызывается из GMod перед сохранением: возвращаем изменённое тело страницы */
+	window.ixGetBody = function() {
+		var el = document.querySelector('.a4');
+		var html = el ? el.innerHTML : '';
+		html = html.replace(/<h1 class="note-title">[\s\S]*?<\/h1>/i, '');
+		return JSON.stringify(html);
+	};
+})();
+]]
 
 ix.lang.AddTable("english", {
 	notepaperNotepad = "Notepad",
@@ -63,7 +97,18 @@ ix.lang.AddTable("english", {
 	notepaperTooLong = "Your note is too long and was truncated.",
 	notepaperNoCharacter = "You need an active character to do that.",
 	notepaperNotOwner = "Only the author can edit this note.",
-	notepaperMaxPages = "This notepad is full."
+	notepaperMaxPages = "This notepad is full.",
+	notepaperModeText = "Plain text",
+	notepaperModeRich = "HTML editor",
+	notepaperBold = "Bold",
+	notepaperItalic = "Italic",
+	notepaperUnderline = "Underline",
+	notepaperHeading = "Heading",
+	notepaperParagraph = "Paragraph",
+	notepaperList = "List",
+	notepaperQuote = "Quote",
+	notepaperCopy = "Copy text",
+	notepaperCopied = "Note copied to clipboard."
 })
 
 ix.lang.AddTable("russian", {
@@ -83,5 +128,16 @@ ix.lang.AddTable("russian", {
 		notepaperTooLong = "Ваша запись слишком длинная и была обрезана.",
 		notepaperNoCharacter = "Для этого нужен активный персонаж.",
 		notepaperNotOwner = "Только автор может редактировать эту запись.",
-		notepaperMaxPages = "Этот блокнот заполнен."
+		notepaperMaxPages = "Этот блокнот заполнен.",
+		notepaperModeText = "Простой текст",
+		notepaperModeRich = "HTML-редактор",
+		notepaperBold = "Жирный",
+		notepaperItalic = "Курсив",
+		notepaperUnderline = "Подчёрк.",
+		notepaperHeading = "Заголовок",
+		notepaperParagraph = "Абзац",
+		notepaperList = "Список",
+		notepaperQuote = "Цитата",
+		notepaperCopy = "Копировать",
+		notepaperCopied = "Текст записи скопирован в буфер обмена."
 })

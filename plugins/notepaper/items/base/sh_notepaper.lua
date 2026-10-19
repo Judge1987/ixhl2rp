@@ -9,10 +9,10 @@ function ITEM:GetNote()
 	local data = self.data or {}
 
 	if (!istable(data.pages)) then
-		return {title = "", pages = {data.text or ""}}
+		return {title = "", pages = {data.text or ""}, maxPages = self.maxPages or 1}
 	end
 
-	return {title = data.title or "", pages = data.pages}
+	return {title = data.title or "", pages = data.pages, maxPages = self.maxPages or 1}
 end
 
 function ITEM:SetNote(note, character)
