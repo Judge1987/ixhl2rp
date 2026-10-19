@@ -2,7 +2,7 @@ local PLUGIN = PLUGIN
 
 ITEM.name = "Notepad"
 ITEM.description = "A pocket notepad with %d pages, %s."
-ITEM.model = Model("models/props_c17/notepad001a.mdl")
+ITEM.model = Model("models/props_office/notepad_office.mdl")
 ITEM.width = 1
 ITEM.height = 1
 ITEM.price = 10
